@@ -1,0 +1,2 @@
+# Threaded-Encryption
+The purpose of this project is to implement a multi-threaded text file encryptor. Conceptually, the function of the program is simple: to read characters from an input source, encrypt the text, and write the encrypted characters to an output. Also, the encryption program counts the number of occurrences of each letter in the input and output files. All I/O and encryption is performed by a module (encrypt-module.c) that is supplied by the project. Here is the single threaded version that uses the methods of the encrypt module.
