@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17)
-project(LittleShell C)
+project(Threaded-Encryption C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_library(LittleShell src/main.c)
+add_library(Threaded-Encryption src/main.c)
