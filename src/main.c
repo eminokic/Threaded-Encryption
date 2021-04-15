@@ -4,1026 +4,494 @@
 
   @author       Emin Okic
 
-  @date         Monday, March 8th, 2021
+  @date         Friday, April 23rd, 2021
 
-  @Project        UNIX Shell
+  @Project        Multi-Threaded Encryption
 
 *******************************************************************************/
 
-#include "../include/Colors.h"
+/**
+	A rudimentary multi-threaded encryption program. I used a custom queue implementation to manage the buffer. This queue has node objects representing an object in the queue/buffer to be written or moved.
+
+	Functions:
+	readInput: Continously read input from a file placing things in the input buffer
+	countInput: Continously count things in the input buffer
+	encryptInput: Continously encrypt2 items in the input buffer, remove them from the buffer, and push them in the output buffer
+	countOutput: Continously count things in the output buffer
+	write: Continously write things to the output file from the output buffer
+
+
+*/
+
+//CLib imports
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <string.h>
-#include <signal.h>
-#include <pwd.h>
-#include <glob.h>
-#include <sys/wait.h>
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <pthread.h>
+#include <semaphore.h>
 
-#define NR_JOBS 20
-#define PATH_BUFSIZE 1024
-#define COMMAND_BUFSIZE 1024
-#define TOKEN_BUFSIZE 64
-#define TOKEN_DELIMITERS " \t\r\n\a"
+/*
+ * Object declarations
 
-#define BACKGROUND_EXECUTION 0
-#define FOREGROUND_EXECUTION 1
-#define PIPELINE_EXECUTION 2
-
-#define COMMAND_EXTERNAL 0
-#define COMMAND_EXIT 1
-#define COMMAND_CD 2
-#define COMMAND_JOBS 3
-#define COMMAND_FG 4
-#define COMMAND_BG 5
-#define COMMAND_KILL 6
-#define COMMAND_EXPORT 7
-#define COMMAND_UNSET 8
-#define COMMAND_HELP 9
-#define COMMAND_WHICH_USER 10
-#define COMMAND_WHICH_DIRECTORY 11
-
-#define STATUS_RUNNING 0
-#define STATUS_DONE 1
-#define STATUS_SUSPENDED 2
-#define STATUS_CONTINUED 3
-#define STATUS_TERMINATED 4
-
-#define PROC_FILTER_ALL 0
-#define PROC_FILTER_DONE 1
-#define PROC_FILTER_REMAINING 2
-
-
-const char* STATUS_STRING[] = {
-    "Running",
-    "Done",
-    "Suspended",
-    "Continued",
-    "Terminated"
-};
-
-struct process {
-    char *command;
-    int argc;
-    char **argv;
-    char *input_path;
-    char *output_path;
-    pid_t pid;
-    int type;
-    int status;
-    struct process *next;
-};
-
-struct job {
-    int id;
-    struct process *root;
-    char *command;
-    pid_t pgid;
-    int mode;
-};
-
-struct shell_info {
-    char cur_user[TOKEN_BUFSIZE];
-    char cur_dir[PATH_BUFSIZE];
-    char pw_dir[PATH_BUFSIZE];
-    struct job *jobs[NR_JOBS + 1];
-};
-
-struct shell_info *shell;
-
-int get_job_id_by_pid(int pid) {
-    int i;
-    struct process *proc;
-
-    for (i = 1; i <= NR_JOBS; i++) {
-        if (shell->jobs[i] != NULL) {
-            for (proc = shell->jobs[i]->root; proc != NULL; proc = proc->next) {
-                if (proc->pid == pid) {
-                    return i;
-                }
-            }
-        }
-    }
-
-    return -1;
-}
-
-struct job* get_job_by_id(int id) {
-    if (id > NR_JOBS) {
-        return NULL;
-    }
-
-    return shell->jobs[id];
-}
-
-int get_pgid_by_job_id(int id) {
-    struct job *job = get_job_by_id(id);
-
-    if (job == NULL) {
-        return -1;
-    }
-
-    return job->pgid;
-}
-
-int get_proc_count(int id, int filter) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    int count = 0;
-    struct process *proc;
-    for (proc = shell->jobs[id]->root; proc != NULL; proc = proc->next) {
-        if (filter == PROC_FILTER_ALL ||
-            (filter == PROC_FILTER_DONE && proc->status == STATUS_DONE) ||
-            (filter == PROC_FILTER_REMAINING && proc->status != STATUS_DONE)) {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-int get_next_job_id() {
-    int i;
-
-    for (i = 1; i <= NR_JOBS; i++) {
-        if (shell->jobs[i] == NULL) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int print_processes_of_job(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    printf("[%d]", id);
-
-    struct process *proc;
-    for (proc = shell->jobs[id]->root; proc != NULL; proc = proc->next) {
-        printf(" %d", proc->pid);
-    }
-    printf("\n");
-
-    return 0;
-}
-
-int print_job_status(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    printf("[%d]", id);
-
-    struct process *proc;
-    for (proc = shell->jobs[id]->root; proc != NULL; proc = proc->next) {
-        printf("\t PID: %d \t STATUS: %s \t COMMAND: %s", proc->pid,
-            STATUS_STRING[proc->status], proc->command);
-        if (proc->next != NULL) {
-            printf("|\n");
-        } else {
-            printf("\n");
-        }
-    }
-
-    return 0;
-}
-
-int release_job(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    struct job *job = shell->jobs[id];
-    struct process *proc, *tmp;
-    for (proc = job->root; proc != NULL; ) {
-        tmp = proc->next;
-        free(proc->command);
-        free(proc->argv);
-        free(proc->input_path);
-        free(proc->output_path);
-        free(proc);
-        proc = tmp;
-    }
-
-    free(job->command);
-    free(job);
-
-    return 0;
-}
-
-int insert_job(struct job *job) {
-    int id = get_next_job_id();
-
-    if (id < 0) {
-        return -1;
-    }
-
-    job->id = id;
-    shell->jobs[id] = job;
-    return id;
-}
-
-int remove_job(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    release_job(id);
-    shell->jobs[id] = NULL;
-
-    return 0;
-}
-
-int is_job_completed(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return 0;
-    }
-
-    struct process *proc;
-    for (proc = shell->jobs[id]->root; proc != NULL; proc = proc->next) {
-        if (proc->status != STATUS_DONE) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-int set_process_status(int pid, int status) {
-    int i;
-    struct process *proc;
-
-    for (i = 1; i <= NR_JOBS; i++) {
-        if (shell->jobs[i] == NULL) {
-            continue;
-        }
-        for (proc = shell->jobs[i]->root; proc != NULL; proc = proc->next) {
-            if (proc->pid == pid) {
-                proc->status = status;
-                return 0;
-            }
-        }
-    }
-
-    return -1;
-}
-
-int set_job_status(int id, int status) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    int i;
-    struct process *proc;
-
-    for (proc = shell->jobs[id]->root; proc != NULL; proc = proc->next) {
-        if (proc->status != STATUS_DONE) {
-            proc->status = status;
-        }
-    }
-
-    return 0;
-}
-
-int wait_for_pid(int pid) {
-    int status = 0;
-
-    waitpid(pid, &status, WUNTRACED);
-    if (WIFEXITED(status)) {
-        set_process_status(pid, STATUS_DONE);
-    } else if (WIFSIGNALED(status)) {
-        set_process_status(pid, STATUS_TERMINATED);
-    } else if (WSTOPSIG(status)) {
-        status = -1;
-        set_process_status(pid, STATUS_SUSPENDED);
-    }
-
-    return status;
-}
-
-int wait_for_job(int id) {
-    if (id > NR_JOBS || shell->jobs[id] == NULL) {
-        return -1;
-    }
-
-    int proc_count = get_proc_count(id, PROC_FILTER_REMAINING);
-    int wait_pid = -1, wait_count = 0;
-    int status = 0;
-
-    do {
-        wait_pid = waitpid(-shell->jobs[id]->pgid, &status, WUNTRACED);
-        wait_count++;
-
-        if (WIFEXITED(status)) {
-            set_process_status(wait_pid, STATUS_DONE);
-        } else if (WIFSIGNALED(status)) {
-            set_process_status(wait_pid, STATUS_TERMINATED);
-        } else if (WSTOPSIG(status)) {
-            status = -1;
-            set_process_status(wait_pid, STATUS_SUSPENDED);
-            if (wait_count == proc_count) {
-                print_job_status(id);
-            }
-        }
-    } while (wait_count < proc_count);
-
-    return status;
-}
-
-int get_command_type(char *command) {
-    if (strcmp(command, "exit") == 0) {
-        return COMMAND_EXIT;
-    } else if (strcmp(command, "cd") == 0) {
-        return COMMAND_CD;
-    } else if (strcmp(command, "jobs") == 0) {
-        return COMMAND_JOBS;
-    } else if (strcmp(command, "fg") == 0) {
-        return COMMAND_FG;
-    } else if (strcmp(command, "bg") == 0) {
-        return COMMAND_BG;
-    } else if (strcmp(command, "kill") == 0) {
-        return COMMAND_KILL;
-    } else if (strcmp(command, "export") == 0) {
-        return COMMAND_EXPORT;
-    } else if (strcmp(command, "unset") == 0) {
-        return COMMAND_UNSET;
-    } else if(strcmp(command, "help") == 0) {
-        return COMMAND_HELP;
-    } else if(strcmp(command, "who") == 0) {
-        return COMMAND_WHICH_USER;
-    } else if(strcmp(command, "where") == 0) {
-        return COMMAND_WHICH_DIRECTORY;
-    }  else {
-        return COMMAND_EXTERNAL;
-    }
-}
-
-char* helper_strtrim(char* line) {
-    char *head = line, *tail = line + strlen(line);
-
-    while (*head == ' ') {
-        head++;
-    }
-    while (*tail == ' ') {
-        tail--;
-    }
-    *(tail + 1) = '\0';
-
-    return head;
-}
-
-void command_update_cwd_info() {
-    getcwd(shell->cur_dir, sizeof(shell->cur_dir));
-}
-
-int command_cd(int argc, char** argv) {
-    if (argc == 1) {
-        chdir(shell->pw_dir);
-        command_update_cwd_info();
-        return 0;
-    }
-
-    if (chdir(argv[1]) == 0) {
-        command_update_cwd_info();
-        return 0;
-    } else {
-        printf("352> cd %s: No such file or directory\n", argv[1]);
-        return 0;
-    }
-}
-
-int command_jobs(int argc, char **argv) {
-    int i;
-
-    for (i = 0; i < NR_JOBS; i++) {
-        if (shell->jobs[i] != NULL) {
-            print_job_status(i);
-        }
-    }
-
-    return 0;
-}
-
-int command_fg(int argc, char **argv) {
-    if (argc < 2) {
-        printf("usage: fg <pid>\n");
-        return -1;
-    }
-
-    int status;
-    pid_t pid;
-    int job_id = -1;
-
-    if (argv[1][0] == '%') {
-        job_id = atoi(argv[1] + 1);
-        pid = get_pgid_by_job_id(job_id);
-        if (pid < 0) {
-            printf("352> fg %s: no such job\n", argv[1]);
-            return -1;
-        }
-    } else {
-        pid = atoi(argv[1]);
-    }
-
-    if (kill(-pid, SIGCONT) < 0) {
-        printf("352> fg %d: job not found\n", pid);
-        return -1;
-    }
-
-    tcsetpgrp(0, pid);
-
-    if (job_id > 0) {
-        set_job_status(job_id, STATUS_CONTINUED);
-        print_job_status(job_id);
-        if (wait_for_job(job_id) >= 0) {
-            remove_job(job_id);
-        }
-    } else {
-        wait_for_pid(pid);
-    }
-
-    signal(SIGTTOU, SIG_IGN);
-    tcsetpgrp(0, getpid());
-    signal(SIGTTOU, SIG_DFL);
-
-    return 0;
-}
-
-int command_bg(int argc, char **argv) {
-    if (argc < 2) {
-        printf("usage: bg <pid>\n");
-        return -1;
-    }
-
-    pid_t pid;
-    int job_id = -1;
-
-    if (argv[1][0] == '%') {
-        job_id = atoi(argv[1] + 1);
-        pid = get_pgid_by_job_id(job_id);
-        if (pid < 0) {
-            printf("352> bg %s: no such job\n", argv[1]);
-            return -1;
-        }
-    } else {
-        pid = atoi(argv[1]);
-    }
-
-    if (kill(-pid, SIGCONT) < 0) {
-        printf("352> bg %d: job not found\n", pid);
-        return -1;
-    }
-
-    if (job_id > 0) {
-        set_job_status(job_id, STATUS_CONTINUED);
-        print_job_status(job_id);
-    }
-
-    return 0;
-}
-
-int command_kill(int argc, char **argv) {
-    if (argc < 2) {
-        printf("usage: kill <pid>\n");
-        return -1;
-    }
-
-    pid_t pid;
-    int job_id = -1;
-
-    if (argv[1][0] == '%') {
-        job_id = atoi(argv[1] + 1);
-        pid = get_pgid_by_job_id(job_id);
-        if (pid < 0) {
-            printf("352> kill %s: no such job\n", argv[1]);
-            return -1;
-        }
-        pid = -pid;
-    } else {
-        pid = atoi(argv[1]);
-    }
-
-    if (kill(pid, SIGKILL) < 0) {
-        printf("352> kill %d: job not found\n", pid);
-        return 0;
-    }
-
-    if (job_id > 0) {
-        set_job_status(job_id, STATUS_TERMINATED);
-        print_job_status(job_id);
-        if (wait_for_job(job_id) >= 0) {
-            remove_job(job_id);
-        }
-    }
-
-    return 1;
-}
-
-int command_export(int argc, char **argv) {
-    if (argc < 2) {
-        printf("usage: export KEY=VALUE\n");
-        return -1;
-    }
-
-    return putenv(argv[1]);
-}
-
-int command_unset(int argc, char **argv) {
-    if (argc < 2) {
-        printf("usage: unset KEY\n");
-        return -1;
-    }
-
-    return unsetenv(argv[1]);
-}
-
-int command_exit() {
-    printf(BHWHT "Closing shell ... \n");
-    exit(0);
-}
-
-/**
-  @brief List of builtin commands, followed by their corresponding functions.
+ * These objects are a stack of jobs (to track running and finished jobs) and the job item that sits in the stack
  */
-char *builtin_str[] = {
-        "cd - The cd command changes the current directory.",
-        "help - The help command prints out all available commands.",
-        "ls - The ls command prints out all files in the current directory.",
-        "bg - The bg command resumes a background process.",
-        "jobs - The jobs command prints out all currently running background and foreground commands.",
-        "kill - The kill command stops the selected process.",
-        "& - The ampersand operator can be used to execute processes in the background.",
-        "| - The mid operator can be used to pipeline commands.",
-        "unset - The unset command removes some arbitrary variable from the shell.",
-        "export - The export command allows a variable to be passed down to child processes when specified without affecting other environments.",
-        "who - The who command prints out the current user accessing the shell."
-        "where - The where command prints out the current directory the user is accessing."
-        "exit - The exit command closes the shell interface."
+
+typedef struct node node;
+
+//Object representing a single characted item in a buffer/queue
+struct node {
+    char c; //This character
+
+    int counted; //If it has been counted yet or not
+    int encrypted; //If it has been encrypted yet or not
+
+    node* prev; //One directional LL as Queue
 };
 
-/**
- * @brief Printing all available commands.
- * @return size of commands array.
+//buffer queue
+typedef struct {
+    node* head; //Front of q (for dequeueing)
+    node* tail; // Back of q (for enqueuing)
+
+    int capacity; //Max size
+    int count; //current size
+} queue;
+
+/*
+ * End object declarations
  */
-int num_builtins() {
-    return sizeof(builtin_str) / sizeof(char *);
-}
-/**
-   @brief Builtin command: print help.
-   @param args List of args.  Not examined.
-   @return Always returns 1, to continue executing.
- */
-    int command_help(char **args)
-    {
-    int i;
-    printf(BHWHT "UNIX Shell Interface\n");
-    printf(BHWHT "The following are built in:\n");
 
-    for (i = 0; i < num_builtins(); i++) {
-    printf(BHWHT "  %s\n", builtin_str[i]);
-    }
+//Prototypes
+void* readInput(void* args);
+void* countInput(void* args);
+void* encryptInput(void* args);
+void* countOutput(void* args);
+void* writeOutput(void* args);
+void debug(char* msg);
 
-    printf("Use the man command for information on other programs.\n");
-    return 1;
-    }
+//Shared data
+//Count variables
+int inputCount[255];
+int outputCount[255];
+int bufSize;
 
-void check_zombie() {
-    int status, pid;
-    while ((pid = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
-        if (WIFEXITED(status)) {
-            set_process_status(pid, STATUS_DONE);
-        } else if (WIFSTOPPED(status)) {
-            set_process_status(pid, STATUS_SUSPENDED);
-        } else if (WIFCONTINUED(status)) {
-            set_process_status(pid, STATUS_CONTINUED);
-        }
+//I/O buffers
+queue input_bufferq;
+queue output_bufferq;
 
-        int job_id = get_job_id_by_pid(pid);
-        if (job_id > 0 && is_job_completed(job_id)) {
-            print_job_status(job_id);
-            remove_job(job_id);
-        }
-    }
-}
+//Semaphores for mutual exclusion
+sem_t read_in;
+sem_t count_in;
+sem_t encrypt_in;
+sem_t encrypt_out;
+sem_t count_out;
+sem_t write_out;
 
-void sigint_handler(int signal) {
-    printf("\n");
-}
+//I/O Files
+FILE * inFile;
+FILE * outFile;
 
-int command_print_user(char **args) {
-    printf(BHWHT "Current User: " HCYN "%s \n", shell->cur_user);
-    return 1;
-}
+//debugging for output
+int debugging = 0;
 
-int command_print_directory(char **args) {
-    printf(BHWHT "Directory: " HYEL "%s" COLOR_NONE "\n", shell->cur_dir);
-    return 1;
-}
+int main(int argc, char** argv) {
+    pthread_t in, icount, en, ocount, out;
 
-int execute_builtin_command(struct process *proc) {
-    int status = 1;
-
-    switch (proc->type) {
-        case COMMAND_EXIT:
-            command_exit();
-            break;
-        case COMMAND_CD:
-            command_cd(proc->argc, proc->argv);
-            break;
-        case COMMAND_JOBS:
-            command_jobs(proc->argc, proc->argv);
-            break;
-        case COMMAND_FG:
-            command_fg(proc->argc, proc->argv);
-            break;
-        case COMMAND_BG:
-            command_bg(proc->argc, proc->argv);
-            break;
-        case COMMAND_KILL:
-            command_kill(proc->argc, proc->argv);
-            break;
-        case COMMAND_EXPORT:
-            command_export(proc->argc, proc->argv);
-            break;
-        case COMMAND_UNSET:
-            command_unset(proc->argc, proc->argv);
-            break;
-        case COMMAND_HELP:
-            command_help(proc->argv);
-            break;
-        case COMMAND_WHICH_USER:
-            command_print_user(proc->argv);
-            break;
-        case COMMAND_WHICH_DIRECTORY:
-            command_print_directory(proc->argv);
-            break;
-        default:
-            status = 0;
-            break;
-    }
-
-    return status;
-}
-
-int command_launch_process(struct job *job, struct process *proc, int in_fd, int out_fd, int mode) {
-    proc->status = STATUS_RUNNING;
-    if (proc->type != COMMAND_EXTERNAL && execute_builtin_command(proc)) {
-        return 0;
-    }
-
-    pid_t childpid;
-    int status = 0;
-
-    childpid = fork();
-
-    if (childpid < 0) {
-        return -1;
-    } else if (childpid == 0) {
-        signal(SIGINT, SIG_DFL);
-        signal(SIGQUIT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
-        signal(SIGTTIN, SIG_DFL);
-        signal(SIGTTOU, SIG_DFL);
-        signal(SIGCHLD, SIG_DFL);
-
-        proc->pid = getpid();
-        if (job->pgid > 0) {
-            setpgid(0, job->pgid);
-        } else {
-            job->pgid = proc->pid;
-            setpgid(0, job->pgid);
-        }
-
-        if (in_fd != 0) {
-            dup2(in_fd, 0);
-            close(in_fd);
-        }
-
-        if (out_fd != 1) {
-            dup2(out_fd, 1);
-            close(out_fd);
-        }
-
-        if (execvp(proc->argv[0], proc->argv) < 0) {
-            printf("352> %s: command not found\n", proc->argv[0]);
-            exit(0);
-        }
-
+    //Validate argument size
+    if ( argc != 3 ) {
+        printf("Incorrect format. Should be: ./encrypt2 inputfile outputfile \n");
         exit(0);
+    }
+
+    //Try to open files
+    inFile = fopen(argv[1], "r");
+    outFile = fopen(argv[2], "w");
+
+    if ( inFile == NULL ) {
+        printf("Input file doesn't exist \n");
+        exit(0);
+    }
+
+    //Read Input
+    printf("Enter Buffer Size:");
+    fflush(stdout);
+
+    char bufSizeReader[256];
+    fgets(bufSizeReader, 256, stdin);
+    bufSizeReader[strlen(bufSizeReader) - 1] = '\0';
+
+    //Convert it to an int
+    bufSize = atoi(bufSizeReader);
+
+    //Initialize shared variables
+    //Buffers
+    input_bufferq.capacity = bufSize;
+    input_bufferq.count = 0;
+    output_bufferq.capacity = bufSize;
+    output_bufferq.count = 0;
+
+    //Initialize semaphores
+    sem_init(&read_in, 0, 1);
+    sem_init(&count_in, 0, 0);
+    sem_init(&encrypt_in, 0, 0);
+    sem_init(&encrypt_out, 0, 1);
+    sem_init(&count_out, 0, 0);
+    sem_init(&write_out, 0, 0);
+
+    //Create threads
+    //readInput(NULL);
+    pthread_create(&in, NULL, readInput, NULL);
+    pthread_create(&icount, NULL, countInput, NULL);
+    pthread_create(&en, NULL, encryptInput, NULL);
+    pthread_create(&ocount, NULL, countOutput, NULL);
+    pthread_create(&out, NULL, writeOutput, NULL);
+
+    //Wait for completion
+    pthread_join(in, NULL);
+    pthread_join(icount, NULL);
+    pthread_join(en, NULL);
+    pthread_join(ocount, NULL);
+    pthread_join(out, NULL);
+
+    printf("Input Counts: \n");
+
+    int i;
+    for(i = 0; i < 255; i++ ) {
+        if ( inputCount[i] > 0 && ((char) i) != '\n' ) {
+            printf("%c %d \n",(char) i, inputCount[i]);
+        }
+    }
+
+    printf("Output Counts: \n");
+
+    for(i = 0; i < 255; i++ ) {
+        if ( outputCount[i] > 0  && ((char) i) != '\n' ) {
+            printf("%c %d \n",(char) i, outputCount[i]);
+        }
+    }
+
+    return 1;
+}
+
+//Enqueueing objects into a buffer queue
+//TODO Never: Memory management doe
+int enqueue(queue* q, char c){
+    if ( q->count == q->capacity ) {
+        return 0;
+    }
+
+    node* newChar = (node*) malloc(sizeof(node));
+    newChar->counted = 0;
+    newChar->encrypted = 0;
+    newChar->c = c;
+
+    if ( q->count == 0) {
+        q->head = newChar;
+        q->tail = newChar;
     } else {
-        proc->pid = childpid;
-        if (job->pgid > 0) {
-            setpgid(childpid, job->pgid);
-        } else {
-            job->pgid = proc->pid;
-            setpgid(childpid, job->pgid);
-        }
-
-        if (mode == FOREGROUND_EXECUTION) {
-            tcsetpgrp(0, job->pgid);
-            status = wait_for_job(job->id);
-            signal(SIGTTOU, SIG_IGN);
-            tcsetpgrp(0, getpid());
-            signal(SIGTTOU, SIG_DFL);
-        }
+        q->tail->prev = newChar;
+        q->tail = newChar;
     }
 
-    return status;
+    q->count = q->count + 1;
+
+    return 1;
 }
 
-int launch_job(struct job *job) {
-    struct process *proc;
-    int status = 0, in_fd = 0, fd[2], job_id = -1;
-
-    check_zombie();
-    if (job->root->type == COMMAND_EXTERNAL) {
-        job_id = insert_job(job);
+//Dequeue an object from the buffer
+//TODO: Memory management
+node* dequeue(queue* q){
+    if ( q->count == 0 ) {
+        return (node*)NULL;
     }
 
-    for (proc = job->root; proc != NULL; proc = proc->next) {
-        if (proc == job->root && proc->input_path != NULL) {
-            in_fd = open(proc->input_path, O_RDONLY);
-            if (in_fd < 0) {
-                printf("352> no such file or directory: %s\n", proc->input_path);
-                remove_job(job_id);
-                return -1;
-            }
-        }
-        if (proc->next != NULL) {
-            pipe(fd);
-            status = command_launch_process(job, proc, in_fd, fd[1], PIPELINE_EXECUTION);
-            close(fd[1]);
-            in_fd = fd[0];
-        } else {
-            int out_fd = 1;
-            if (proc->output_path != NULL) {
-                out_fd = open(proc->output_path, O_CREAT|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
-                if (out_fd < 0) {
-                    out_fd = 1;
+    //Grab node, move head pointer (could end up being null)
+    node* curNode = (node*) malloc(sizeof(node));
+    curNode->c = q->head->c;
+    curNode->counted = q->head->counted;
+    curNode->encrypted = q->head->encrypted;
+
+    q->head = q->head->prev;
+
+    //Set tail to null if this was our only element
+    if ( q->count == 1 ) {
+        q->tail = NULL;
+    }
+
+    q->count--;
+
+    return curNode;
+}
+
+/**
+	Encrypts characters with this methodology:
+
+	1) s = 1;
+	2) Get next character c.
+	3) if c is not a letter then goto (7).
+	4) if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd', 'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
+	5) if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c', 'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
+	6) if (s==0), then do not change c, and set s=1.
+	7) Encrypted character is c.
+
+*/
+char encrypt2(char c, int* s){
+    int cVal = (int) c;
+
+    if ( (cVal >= 65 && cVal <= 90) || (cVal >= 97 && cVal <= 122) ) {
+        //C is a letter
+        switch (*s) {
+
+            //Decrease w/ wraparound
+            case -1:
+                *s = 0;
+                if (cVal == 65 ) {
+                    cVal = 90;
+                } else if (cVal == 97 ) {
+                    cVal = 122;
+                } else {
+                    cVal = cVal - 1;
                 }
-            }
-            status = command_launch_process(job, proc, in_fd, out_fd, job->mode);
-        }
-    }
+                return (char) cVal;
 
-    if (job->root->type == COMMAND_EXTERNAL) {
-        if (status >= 0 && job->mode == FOREGROUND_EXECUTION) {
-            remove_job(job_id);
-        } else if (job->mode == BACKGROUND_EXECUTION) {
-            print_processes_of_job(job_id);
-        }
-    }
+                //Leave
+            case 0:
+                *s = 1;
+                return c;
 
-    return status;
+                //Increase w/ wraparound
+            case 1:
+                *s = -1;
+                if ( cVal == 90 ) {
+                    cVal = 65;
+                } else if ( cVal == 122 ) {
+                    cVal = 97;
+                } else {
+                    cVal = cVal + 1;
+                }
+                return (char) cVal;
+        }
+    } else {
+        return c;
+    }
 }
 
-struct process* parse_command_segment(char *segment) {
-    int bufsize = TOKEN_BUFSIZE;
-    int position = 0;
-    char *command = strdup(segment);
-    char *token;
-    char **tokens = (char**) malloc(bufsize * sizeof(char*));
+/**
+	Encrypts input of the input buffer, passing them to the output buffer one at a time
 
-    if (!tokens) {
-        fprintf(stderr, "352> allocation error\n");
-        exit(EXIT_FAILURE);
-    }
+	Waits on: Input & output buffers to be available to touch (signaled by count in or writer)
+	Signals: Read in and count out
+*/
+void* encryptInput(void* args){
+    node* curIn;
+    node* temp;
+    int s = 1;
+    int wasProcessed = 1;
 
-    token = strtok(segment, TOKEN_DELIMITERS);
-    while (token != NULL) {
-        glob_t glob_buffer;
-        int glob_count = 0;
-        if (strchr(token, '*') != NULL || strchr(token, '?') != NULL) {
-            glob(token, 0, NULL, &glob_buffer);
-            glob_count = glob_buffer.gl_pathc;
-        }
+    while ( 1 ) {
 
-        if (position + glob_count >= bufsize) {
-            bufsize += TOKEN_BUFSIZE;
-            bufsize += glob_count;
-            tokens = (char**) realloc(tokens, bufsize * sizeof(char*));
-            if (!tokens) {
-                fprintf(stderr, "352> allocation error\n");
-                exit(EXIT_FAILURE);
-            }
-        }
+        //Wait on input buffer
+        sem_wait(&encrypt_in);
 
-        if (glob_count > 0) {
-            int i;
-            for (i = 0; i < glob_count; i++) {
-                tokens[position++] = strdup(glob_buffer.gl_pathv[i]);
-            }
-            globfree(&glob_buffer);
-        } else {
-            tokens[position] = token;
-            position++;
-        }
+        debug("in encryption\n");
 
-        token = strtok(NULL, TOKEN_DELIMITERS);
-    }
+        curIn = input_bufferq.head;
 
-    int i = 0, argc = 0;
-    char *input_path = NULL, *output_path = NULL;
-    while (i < position) {
-        if (tokens[i][0] == '<' || tokens[i][0] == '>') {
-            break;
-        }
-        i++;
-    }
-    argc = i;
+        //Encrypt as many as we want
+        while ( curIn != NULL ) {
+            //debug("encryption not null\n");
+            if ( curIn->counted && !curIn->encrypted) {
+                if ( curIn->c != EOF && curIn->c != '\n' ) {
+                    curIn->c = encrypt2(curIn->c, &s); //Encrypt char, adjust S value
+                }
 
-    for (; i < position; i++) {
-        if (tokens[i][0] == '<') {
-            if (strlen(tokens[i]) == 1) {
-                input_path = (char *) malloc((strlen(tokens[i + 1]) + 1) * sizeof(char));
-                strcpy(input_path, tokens[i + 1]);
-                i++;
-            } else {
-                input_path = (char *) malloc(strlen(tokens[i]) * sizeof(char));
-                strcpy(input_path, tokens[i] + 1);
-            }
-        } else if (tokens[i][0] == '>') {
-            if (strlen(tokens[i]) == 1) {
-                output_path = (char *) malloc((strlen(tokens[i + 1]) + 1) * sizeof(char));
-                strcpy(output_path, tokens[i + 1]);
-                i++;
-            } else {
-                output_path = (char *) malloc(strlen(tokens[i]) * sizeof(char));
-                strcpy(output_path, tokens[i] + 1);
-            }
-        } else {
-            break;
-        }
-    }
+                curIn->encrypted = 1;
+                debug("encrypted something\n");
 
-    for (i = argc; i <= position; i++) {
-        tokens[i] = NULL;
-    }
-
-    struct process *new_proc = (struct process*) malloc(sizeof(struct process));
-    new_proc->command = command;
-    new_proc->argv = tokens;
-    new_proc->argc = argc;
-    new_proc->input_path = input_path;
-    new_proc->output_path = output_path;
-    new_proc->pid = -1;
-    new_proc->type = get_command_type(tokens[0]);
-    new_proc->next = NULL;
-    return new_proc;
-}
-
-struct job* parse_command(char *line) {
-    line = helper_strtrim(line);
-    char *command = strdup(line);
-
-    struct process *root_proc = NULL, *proc = NULL;
-    char *line_cursor = line, *c = line, *seg;
-    int seg_len = 0, mode = FOREGROUND_EXECUTION;
-
-    if (line[strlen(line) - 1] == '&') {
-        mode = BACKGROUND_EXECUTION;
-        line[strlen(line) - 1] = '\0';
-    }
-
-    while (1) {
-        if (*c == '\0' || *c == '|') {
-            seg = (char*) malloc((seg_len + 1) * sizeof(char));
-            strncpy(seg, line_cursor, seg_len);
-            seg[seg_len] = '\0';
-
-            struct process* new_proc = parse_command_segment(seg);
-            if (!root_proc) {
-                root_proc = new_proc;
-                proc = root_proc;
-            } else {
-                proc->next = new_proc;
-                proc = new_proc;
-            }
-
-            if (*c != '\0') {
-                line_cursor = c;
-                while (*(++line_cursor) == ' ');
-                c = line_cursor;
-                seg_len = 0;
-                continue;
-            } else {
                 break;
             }
-        } else {
-            seg_len++;
-            c++;
+
+            curIn = curIn->prev;
+        }
+
+        //Establish if the sequential next element is ready to process
+        if (input_bufferq.count > 0 && input_bufferq.head->encrypted){
+            temp = dequeue(&input_bufferq);
+            //debug("Ready to go to output\n");
+            //Signal input buffer
+            sem_post(&read_in);
+        }
+
+        //Wait on output buffer
+        sem_wait(&encrypt_out);
+
+        //If we can process this element
+        enqueue(&output_bufferq, temp->c);
+        debug("Pushed to output\n");
+
+        sem_post(&count_out);
+
+        if ( temp->c == EOF ) {
+            debug("--------FINISHED ENCRYPTING\n");
+            break;
         }
     }
-
-    struct job *new_job = (struct job*) malloc(sizeof(struct job));
-    new_job->root = root_proc;
-    new_job->command = command;
-    new_job->pgid = -1;
-    new_job->mode = mode;
-    return new_job;
 }
 
-char* read_line() {
-    int bufsize = COMMAND_BUFSIZE;
-    int position = 0;
-    char *buffer = malloc(sizeof(char) * bufsize);
-    int c;
+/**
+	Continously counts the character occurences in the output buffer
 
-    if (!buffer) {
-        fprintf(stderr, "352> allocation error\n");
-        exit(EXIT_FAILURE);
-    }
+	Waits on: Output Buffer to be available to touch (signaled by encryption)
+	Signals: Writer (to file)
+*/
+void* countOutput(void* args){
+    int i;
+    node* cur;
 
-    while (1) {
-        c = getchar();
+    while ( 1 ) {
+        //Wait on output
+        sem_wait(&count_out);
 
-        if (c == EOF || c == '\n') {
-            buffer[position] = '\0';
-            return buffer;
-        } else {
-            buffer[position] = c;
-        }
-        position++;
+        cur = output_bufferq.head;
 
-        if (position >= bufsize) {
-            bufsize += COMMAND_BUFSIZE;
-            buffer = realloc(buffer, bufsize);
-            if (!buffer) {
-                fprintf(stderr, "352> allocation error\n");
-                exit(EXIT_FAILURE);
+        debug("in output\n");
+        while ( cur != NULL ) {
+            //debug("In output not null\n");
+            if ( !cur->counted ) {
+                outputCount[cur->c] = outputCount[cur->c] + 1; //Increment this character count
+                cur->counted = 1;
+
+                sem_post(&write_out);
+
+                debug("Counted some output \n");
+
+                if ( cur->c == EOF ) {
+                    debug("--------FINISHED COUNTING OUT\n");
+                    return (void*) NULL;
+                } else {
+                    break;
+                }
+            } else {
+                cur = cur->prev;
             }
         }
     }
 }
 
-void print_prompt() {
-    printf(BHWHT "352>" BHWHT " ");
-}
+/**
+	Continously counts the character occurences in the input buffer
 
-void print_welcome() {
-    printf(BHWHT "Loading UNIX Shell... \n");
-    printf(BHWHT "User: " HCYN "%s" BHWHT " \nDirectory: " HYEL "%s" COLOR_NONE "\n", shell->cur_user, shell->cur_dir);
-}
-
-void loop() {
-    char *line;
-    struct job *job;
-    int status = 1;
-
-    while (1) {
-        print_prompt();
-        line = read_line();
-        if (strlen(line) == 0) {
-            check_zombie();
-            continue;
-        }
-        job = parse_command(line);
-        status = launch_job(job);
-    }
-}
-
-void init() {
-    struct sigaction sigint_action = {
-        .sa_handler = &sigint_handler,
-        .sa_flags = 0
-    };
-    sigemptyset(&sigint_action.sa_mask);
-    sigaction(SIGINT, &sigint_action, NULL);
-
-    signal(SIGQUIT, SIG_IGN);
-    signal(SIGTSTP, SIG_IGN);
-    signal(SIGTTIN, SIG_IGN);
-
-    pid_t pid = getpid();
-    setpgid(pid, pid);
-    tcsetpgrp(0, pid);
-
-    shell = (struct shell_info*) malloc(sizeof(struct shell_info));
-    getlogin_r(shell->cur_user, sizeof(shell->cur_user));
-
-    struct passwd *pw = getpwuid(getuid());
-    strcpy(shell->pw_dir, pw->pw_dir);
-
+	Waits on: Input Buffer to be available to touch (signaled by readinput)
+	Signals: Encryption
+*/
+void* countInput(void* args){
     int i;
-    for (i = 0; i < NR_JOBS; i++) {
-        shell->jobs[i] = NULL;
+    node* cur;
+
+    while ( 1 ) {
+        //Wait on input
+        sem_wait(&count_in);
+
+        cur = input_bufferq.head;
+
+        debug("In counting\n");
+        while ( cur != NULL ) {
+            //debug("in count not null\n");
+            if ( cur->counted == 0 ) {
+                inputCount[cur->c] = inputCount[cur->c] + 1; //Increment this character count
+                cur->counted = 1;
+
+                sem_post(&encrypt_in);
+
+                debug("Counted some input \n");
+
+                if ( cur->c == EOF ) {
+                    debug("--------FINISHED COUNTING IN\n");
+                    return (void*) NULL;
+                } else {
+                    break;
+                }
+            } else {
+                cur = cur->prev;
+            }
+        }
+
     }
 
-    command_update_cwd_info();
 }
 
-int main(int argc, char **argv) {
-    init();
-    print_welcome();
-    loop();
+/**
+	Continously read input from a file byte-by-byte, writing to a buffer.
 
-    return EXIT_SUCCESS;
+	Waits on: Input Buffer to be available to touch (signaled by encryption)
+	Signals: Counting thread
+*/
+void* readInput(void* args){
+    char cur;
+
+    cur = fgetc(inFile);
+
+    while ( 1 ) {
+        //WAIT on input
+        sem_wait(&read_in);
+
+        if ( enqueue(&input_bufferq, cur) ) {
+            debug("Placed char in buffer (in)\n");
+
+            sem_post(&count_in);
+
+            if ( cur == EOF) {
+                debug("--------FINISHED READING\n");
+                break;
+            } else {
+                cur = fgetc(inFile);
+            }
+        }
+
+    }
+}
+
+/**
+	Write to the output file continously.
+
+	Waits on: Output Buffer to be available to touch (signaled by output counter)
+	Signals: Encryption
+*/
+void* writeOutput(void* args){
+    node* cur;
+
+    while ( 1 ) {
+        //WAIT on output
+        sem_wait(&write_out);
+
+        cur = output_bufferq.head;
+
+        //Iterate over each node, but break as soon as we find one that isn't counted to maintain order
+        if ( cur->counted ) {
+            dequeue(&output_bufferq);
+
+            if ( cur->c == EOF ) {
+                break;
+            }
+
+            fputc(cur->c, outFile);
+            fflush(outFile);
+
+            cur = cur->prev;
+        }
+
+        sem_post(&encrypt_out);
+    }
+
+    debug("-----------Finishing writing output\n");
+}
+
+/**
+	Function for outputting debug messages when applicable
+*/
+void debug(char* msg){
+    if ( debugging ) {
+        printf("%s", msg);
+    }
 }

@@ -7,3 +7,9 @@ main.o: main.c
 	gcc main.c -c
 clean:
 	rm -rf main.o main
+
+encrypt: main.c
+	gcc -pthread -o encrypt main.c
+
+clean:
+	rm encrypt
