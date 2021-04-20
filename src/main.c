@@ -16,18 +16,16 @@
 #include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
-
-typedef struct node node;
+#include <time.h>
+#include <ctype.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 /**
-
-   A single instance of an item inside of the buffer.
-
-   @char c – character value representing this
-   @int has_been_counted – whether or not the instance has been counted
-   @int has_been_encrypted – whether or not the instance has been encrypted
-
+ * A node object to be implemented into the queue.
  */
+typedef struct node node;
+
 struct node {
 
     char c;
@@ -40,14 +38,7 @@ struct node {
 
 
 /**
-
-   implementation of a priority queue for the buffer
-
-   @n* front – the first element in the priority queue
-   @n* back – the last element in the priority queue
-   @int max – the max size of the buffer
-   @int curr – the respective current size of the buffer
-
+   Implementation of a queue for the buffer
  */
 typedef struct {
 
@@ -60,10 +51,7 @@ typedef struct {
 } priority_queue;
 
 /**
-   PROTOTYPE FUNCTION DECLARATIONS
-
-   @a - arguments passed into the function
-
+   Encrypt Module Library
  */
 
 void *count_input(void *a);
@@ -71,12 +59,8 @@ void *read_input(void *a);
 void *input_encrypt(void *a);
 void *count_output(void *a);
 void *write_output(void *a);
-//int is_character(char c);
-void outlog(char *text);
+void responseLog(char *text);
 
-/**
-   GLOBAL CONSTANTS
- */
 
 int in_count[255];
 int out_count[255];
@@ -99,20 +83,19 @@ int toLog = 0;
 
 int main(int argc, char **argv) {
 
-    //list of threads we need to keep track of
+    //The list of threads for the main program
     pthread_t in, count_in, encrypt, count_out, out;
 
-    //check to see if the number of command line argument is correct (3)
+    //Command Input Verification
     if (argc != 3) {
         printf("Invalid number of arguments.\n   Usage: ./encryptMessage [infile] [outfile] \n");
         exit(-1); //exit with an error
     }
 
-    //correct number of arguments, file check now
+    //Read/Write Files
     in_file = fopen(argv[1], "r");
     out_file = fopen(argv[2], "w");
 
-    //if we correctly opened a file for reading then we can continue
     if (in_file != NULL) {
 
         printf("Please enter a buffer size: ");
@@ -124,9 +107,6 @@ int main(int argc, char **argv) {
 
         size = atoi(buff_size);
 
-        /**
-           init all the global variables
-         */
         input_buffer.max = size;
         input_buffer.curr = 0;
         output_buffer.max = size;
@@ -155,9 +135,7 @@ int main(int argc, char **argv) {
 
         //print out the input file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && in_count[i] > 0) {//&& is_character((char) i)) {
-                //not sure whether or not we're supposed to print out non alphabetic
-                //characters here as well, so i'm just going to anyway
+            if (((char) i) != '\n' && in_count[i] > 0) {
                 printf("%c: %d\n", (char) i, in_count[i]);
             }
         }
@@ -165,33 +143,19 @@ int main(int argc, char **argv) {
         printf("output file contains: \n");
         //print out the output file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && out_count[i] > 0){//&& is_character((char) i)) {
-                //not sure whether or not we're supposed to print out non alphabetic
-                //characters here as well, so i'm just going to anyway
+            if (((char) i) != '\n' && out_count[i] > 0){
                 printf("%c: %d\n", (char) i, out_count[i]);
             }
         }
 
-        return 1; //success
+        return 1;
 
     } else {
         printf("File not found for given name: %s \n", argv[1]);
-        exit(-1); //exit with an error
+        exit(-1);
     }
 }
 
-int is_character(char c) {
-    return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-}
-
-/**
-
-   Moves the object up one slot in the priority queue
-
-   @priority_queue queue – the queue to move the character forward in
-   @char c – the character to be enqueued
-
- */
 int enqueue(priority_queue *queue, char c) {
 
     //check to see if the queue is full
@@ -216,13 +180,6 @@ int enqueue(priority_queue *queue, char c) {
     return 1;
 }
 
-/**
-
-  Rremoves the object from the buffer
-
-  @priority_queue queue – the queue to remove the object from
-
- */
 node *dequeue(priority_queue *queue) {
 
     //nothing to remove from the queue
@@ -249,20 +206,17 @@ node *dequeue(priority_queue *queue) {
 }
 
 /**
-
-   Encryption of data. Here is the algorithm laid out very plainly.
-
-
-   1) s = 1;
-   2) Get next character c.
-   3) if c is not a letter then goto (7).
-   4) if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd',
-      'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
-   5) if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c',
-      'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
-   6) if (s==0), then do not change c, and set s=1.
-   7) Encrypted character is c.
-   8) If c!=EOF then goto (2).
+   Encryption Algorithm:
+    1. s = 1;
+    2. Get next character c.
+    3. if c is not a letter then goto (7).
+    4. if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd',
+        'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
+    5. if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c',
+        'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
+    6. if (s==0), then do not change c, and set s=1.
+    7. Encrypted character is c.
+    8. If c!=EOF then goto (2).
 
  */
 
@@ -270,28 +224,27 @@ char encryptMessage(char c, int *s) {
 
     int int_value = (int) c;
 
-    //we're only encrypting if the character is a letter.. soooo checking for that
     if ((int_value >= 65 && int_value <= 90) || (int_value >= 97 && int_value <= 122)) {
 
         switch(*s) {
 
-            case -1: //decrement with wrap around functionality
+            case -1:
                 *s = 0;
                 int_value = (int_value == 65) ? 90 :
                             (int_value == 97) ? 122 :
                             int_value - 1;
                 return (char) int_value;
-            case 0: //we don't need to do anything
+            case 0:
                 *s = 1;
                 return c;
-            case 1: //increment with wrap around functionality
+            case 1:
                 *s = -1;
                 int_value = (int_value == 90) ? 65 :
                             (int_value == 122) ? 97 :
                             int_value + 1;
                 return (char) int_value;
         }
-    } else { return c; } //it's not a letter so don't encryptMessage it
+    } else { return c; }
 }
 
 void *input_encrypt(void *a){
@@ -304,7 +257,7 @@ void *input_encrypt(void *a){
     for(;;) {
 
         sem_wait(&encrypt_input);
-        outlog("input encryption\n");
+        responseLog("input encryption\n");
 
         curr = input_buffer.front;
 
@@ -315,7 +268,7 @@ void *input_encrypt(void *a){
                     curr->c = encryptMessage(curr->c, &initial_s);
                 }
                 curr->has_been_encrypted = 1;
-                outlog("encrypted input\n");
+                responseLog("encrypted input\n");
                 break;
             }
             curr = curr->past;
@@ -326,21 +279,16 @@ void *input_encrypt(void *a){
         }
         sem_wait(&encrypt_output);
         enqueue(&output_buffer, temp->c);
-        outlog("Sent to output\n");
+        responseLog("Sent to output\n");
 
         sem_post(&output_count);
 
         if (temp->c == EOF) {
-            outlog("Encrypting done\n");
+            responseLog("Encrypting done\n");
             break;
         }
     }
 }
-
-/**
-
-
- */
 
 void *count_output(void *a) {
 
@@ -351,7 +299,7 @@ void *count_output(void *a) {
         sem_wait(&output_count);
         curr = output_buffer.front;
 
-        outlog("output counting\n");
+        responseLog("output counting\n");
         while (NULL != curr) {
 
             if (!curr->has_been_counted) {
@@ -359,11 +307,11 @@ void *count_output(void *a) {
                 out_count[curr->c]++;
                 curr->has_been_counted = 1;
                 sem_post(&write_out);
-                outlog("Counted output\n");
+                responseLog("Counted output\n");
 
                 if (curr->c == EOF) {
 
-                    outlog("Counting output done\n");
+                    responseLog("Counting output done\n");
                     return (void*) NULL;
                 } else {
                     break;
@@ -383,16 +331,16 @@ void *count_input(void *a) {
 
         sem_wait(&input_count);
         curr = input_buffer.front;
-        outlog("input counting\n");
+        responseLog("input counting\n");
         while (NULL != curr) {
             if (curr->has_been_counted == 0) {
                 in_count[curr->c]++;
                 curr->has_been_counted = 1;
                 sem_post(&encrypt_input);
-                outlog("Counted input\n");
+                responseLog("Counted input\n");
 
                 if(curr->c == EOF) {
-                    outlog("Counting input done\n");
+                    responseLog("Counting input done\n");
                     return (void*) NULL;
                 } else {
                     break;
@@ -414,11 +362,11 @@ void *read_input(void *a) {
         sem_wait(&read_in);
 
         if (enqueue(&input_buffer, curr)) {
-            outlog("Char put into queue\n");
+            responseLog("Char put into queue\n");
             sem_post(&input_count);
 
             if(curr == EOF) {
-                outlog("Done reading input\n");
+                responseLog("Done reading input\n");
                 break;
             } else {
                 curr = fgetc(in_file);
@@ -448,16 +396,14 @@ void *write_output(void *a) {
         }
         sem_post(&encrypt_output);
     }
-    outlog("Done writing output\n");
+    responseLog("Done writing output\n");
 }
 
 /**
-
-   Helper method to be used solely for debugging. Displays exactly what is wrong.
-
-   @char *text – the string to print out
+ * The Response Log as the name states is used for logging responses made by the console during encryption.
+ * Specifically, it is beneficial to log responses that the console makes regarding buffersize and segmentation faults.
  */
-void outlog(char *text) {
+void responseLog(char *text) {
     if (toLog) {
         printf("%s",text);
     }
