@@ -4,3 +4,7 @@ project(Threaded-Encryption C)
 set(CMAKE_C_STANDARD 99)
 
 add_library(Threaded-Encryption src/main.c)
+
+add_library(Include include/encrypt-module.c)
+
+add_library(Reproducible include/encrypt-module-reproducible.c)

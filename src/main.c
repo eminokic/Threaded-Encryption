@@ -10,20 +10,6 @@
 
 *******************************************************************************/
 
-/**
-	A rudimentary multi-threaded encryption program. I used a custom queue implementation to manage the buffer. This queue has node objects representing an object in the queue/buffer to be written or moved.
-
-	Functions:
-	readInput: Continously read input from a file placing things in the input buffer
-	countInput: Continously count things in the input buffer
-	encryptInput: Continously encrypt2 items in the input buffer, remove them from the buffer, and push them in the output buffer
-	countOutput: Continously count things in the output buffer
-	write: Continously write things to the output file from the output buffer
-
-
-*/
-
-//CLib imports
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -31,467 +17,448 @@
 #include <pthread.h>
 #include <semaphore.h>
 
-/*
- * Object declarations
-
- * These objects are a stack of jobs (to track running and finished jobs) and the job item that sits in the stack
- */
-
 typedef struct node node;
 
-//Object representing a single characted item in a buffer/queue
+/**
+
+   A single instance of an item inside of the buffer.
+
+   @char c – character value representing this
+   @int has_been_counted – whether or not the instance has been counted
+   @int has_been_encrypted – whether or not the instance has been encrypted
+
+ */
 struct node {
-    char c; //This character
 
-    int counted; //If it has been counted yet or not
-    int encrypted; //If it has been encrypted yet or not
+    char c;
+    int has_been_counted;
+    int has_been_encrypted;
 
-    node* prev; //One directional LL as Queue
+    node* past;
+
 };
 
-//buffer queue
+
+/**
+
+   implementation of a priority queue for the buffer
+
+   @n* front – the first element in the priority queue
+   @n* back – the last element in the priority queue
+   @int max – the max size of the buffer
+   @int curr – the respective current size of the buffer
+
+ */
 typedef struct {
-    node* head; //Front of q (for dequeueing)
-    node* tail; // Back of q (for enqueuing)
 
-    int capacity; //Max size
-    int count; //current size
-} queue;
+    node* front;
+    node* back;
 
-/*
- * End object declarations
+    int max;
+    int curr;
+
+} priority_queue;
+
+/**
+   PROTOTYPE FUNCTION DECLARATIONS
+
+   @a - arguments passed into the function
+
  */
 
-//Prototypes
-void* readInput(void* args);
-void* countInput(void* args);
-void* encryptInput(void* args);
-void* countOutput(void* args);
-void* writeOutput(void* args);
-void debug(char* msg);
+void *count_input(void *a);
+void *read_input(void *a);
+void *input_encrypt(void *a);
+void *count_output(void *a);
+void *write_output(void *a);
+//int is_character(char c);
+void outlog(char *text);
 
-//Shared data
-//Count variables
-int inputCount[255];
-int outputCount[255];
-int bufSize;
+/**
+   GLOBAL CONSTANTS
+ */
 
-//I/O buffers
-queue input_bufferq;
-queue output_bufferq;
+int in_count[255];
+int out_count[255];
+int size;
 
-//Semaphores for mutual exclusion
+priority_queue input_buffer;
+priority_queue output_buffer;
+
 sem_t read_in;
-sem_t count_in;
-sem_t encrypt_in;
-sem_t encrypt_out;
-sem_t count_out;
 sem_t write_out;
+sem_t input_count;
+sem_t output_count;
+sem_t encrypt_input;
+sem_t encrypt_output;
 
-//I/O Files
-FILE * inFile;
-FILE * outFile;
+FILE *in_file;
+FILE *out_file;
 
-//debugging for output
-int debugging = 0;
+int toLog = 0;
 
-int main(int argc, char** argv) {
-    pthread_t in, icount, en, ocount, out;
+int main(int argc, char **argv) {
 
-    //Validate argument size
-    if ( argc != 3 ) {
-        printf("Incorrect format. Should be: ./encrypt2 inputfile outputfile \n");
-        exit(0);
+    //list of threads we need to keep track of
+    pthread_t in, count_in, encrypt, count_out, out;
+
+    //check to see if the number of command line argument is correct (3)
+    if (argc != 3) {
+        printf("Invalid number of arguments.\n   Usage: ./encryptMessage [infile] [outfile] \n");
+        exit(-1); //exit with an error
     }
 
-    //Try to open files
-    inFile = fopen(argv[1], "r");
-    outFile = fopen(argv[2], "w");
+    //correct number of arguments, file check now
+    in_file = fopen(argv[1], "r");
+    out_file = fopen(argv[2], "w");
 
-    if ( inFile == NULL ) {
-        printf("Input file doesn't exist \n");
-        exit(0);
-    }
+    //if we correctly opened a file for reading then we can continue
+    if (in_file != NULL) {
 
-    //Read Input
-    printf("Enter Buffer Size:");
-    fflush(stdout);
+        printf("Please enter a buffer size: ");
+        fflush(stdout);
 
-    char bufSizeReader[256];
-    fgets(bufSizeReader, 256, stdin);
-    bufSizeReader[strlen(bufSizeReader) - 1] = '\0';
+        char buff_size[256];
+        fgets(buff_size, 256, stdin);
+        buff_size[strlen(buff_size) - 1] = '\0';
 
-    //Convert it to an int
-    bufSize = atoi(bufSizeReader);
+        size = atoi(buff_size);
 
-    //Initialize shared variables
-    //Buffers
-    input_bufferq.capacity = bufSize;
-    input_bufferq.count = 0;
-    output_bufferq.capacity = bufSize;
-    output_bufferq.count = 0;
+        /**
+           init all the global variables
+         */
+        input_buffer.max = size;
+        input_buffer.curr = 0;
+        output_buffer.max = size;
+        output_buffer.curr = 0;
 
-    //Initialize semaphores
-    sem_init(&read_in, 0, 1);
-    sem_init(&count_in, 0, 0);
-    sem_init(&encrypt_in, 0, 0);
-    sem_init(&encrypt_out, 0, 1);
-    sem_init(&count_out, 0, 0);
-    sem_init(&write_out, 0, 0);
+        sem_init(&read_in, 0, 1);
+        sem_init(&write_out, 0, 0);
+        sem_init(&input_count, 0, 0);
+        sem_init(&output_count, 0, 0);
+        sem_init(&encrypt_input, 0, 0);
+        sem_init(&encrypt_output, 0, 1);
 
-    //Create threads
-    //readInput(NULL);
-    pthread_create(&in, NULL, readInput, NULL);
-    pthread_create(&icount, NULL, countInput, NULL);
-    pthread_create(&en, NULL, encryptInput, NULL);
-    pthread_create(&ocount, NULL, countOutput, NULL);
-    pthread_create(&out, NULL, writeOutput, NULL);
+        pthread_create(&in, NULL, read_input, NULL);
+        pthread_create(&count_in, NULL, count_input, NULL);
+        pthread_create(&encrypt, NULL, input_encrypt, NULL);
+        pthread_create(&count_out, NULL, count_output, NULL);
+        pthread_create(&out, NULL, write_output, NULL);
 
-    //Wait for completion
-    pthread_join(in, NULL);
-    pthread_join(icount, NULL);
-    pthread_join(en, NULL);
-    pthread_join(ocount, NULL);
-    pthread_join(out, NULL);
+        pthread_join(in, NULL);
+        pthread_join(count_in, NULL);
+        pthread_join(encrypt, NULL);
+        pthread_join(count_out, NULL);
+        pthread_join(out, NULL);
 
-    printf("Input Counts: \n");
+        printf("input file contains: \n");
 
-    int i;
-    for(i = 0; i < 255; i++ ) {
-        if ( inputCount[i] > 0 && ((char) i) != '\n' ) {
-            printf("%c %d \n",(char) i, inputCount[i]);
+        //print out the input file contents
+        for (int i = 0; i < 255; i++) {
+            if (((char) i) != '\n' && in_count[i] > 0) {//&& is_character((char) i)) {
+                //not sure whether or not we're supposed to print out non alphabetic
+                //characters here as well, so i'm just going to anyway
+                printf("%c: %d\n", (char) i, in_count[i]);
+            }
         }
-    }
 
-    printf("Output Counts: \n");
-
-    for(i = 0; i < 255; i++ ) {
-        if ( outputCount[i] > 0  && ((char) i) != '\n' ) {
-            printf("%c %d \n",(char) i, outputCount[i]);
+        printf("output file contains: \n");
+        //print out the output file contents
+        for (int i = 0; i < 255; i++) {
+            if (((char) i) != '\n' && out_count[i] > 0){//&& is_character((char) i)) {
+                //not sure whether or not we're supposed to print out non alphabetic
+                //characters here as well, so i'm just going to anyway
+                printf("%c: %d\n", (char) i, out_count[i]);
+            }
         }
-    }
 
-    return 1;
+        return 1; //success
+
+    } else {
+        printf("File not found for given name: %s \n", argv[1]);
+        exit(-1); //exit with an error
+    }
 }
 
-//Enqueueing objects into a buffer queue
-//TODO Never: Memory management doe
-int enqueue(queue* q, char c){
-    if ( q->count == q->capacity ) {
+int is_character(char c) {
+    return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+}
+
+/**
+
+   Moves the object up one slot in the priority queue
+
+   @priority_queue queue – the queue to move the character forward in
+   @char c – the character to be enqueued
+
+ */
+int enqueue(priority_queue *queue, char c) {
+
+    //check to see if the queue is full
+    if (queue->curr == queue->max) {
         return 0;
     }
 
-    node* newChar = (node*) malloc(sizeof(node));
-    newChar->counted = 0;
-    newChar->encrypted = 0;
-    newChar->c = c;
+    node* ch = (node*) malloc(sizeof(node));
+    ch->has_been_counted = 0;
+    ch->has_been_encrypted = 0;
+    ch->c = c;
 
-    if ( q->count == 0) {
-        q->head = newChar;
-        q->tail = newChar;
-    } else {
-        q->tail->prev = newChar;
-        q->tail = newChar;
+    //if nothing is in the queue so far
+    if (queue->curr == 0) {
+        queue->front = ch;
+        queue->back = ch;
+    } else { //otherwise set ch's past equal to the back  and put ch at the back
+        queue->back->past = ch;
+        queue->back = ch;
     }
-
-    q->count = q->count + 1;
-
+    queue->curr++;
     return 1;
 }
 
-//Dequeue an object from the buffer
-//TODO: Memory management
-node* dequeue(queue* q){
-    if ( q->count == 0 ) {
-        return (node*)NULL;
+/**
+
+  Rremoves the object from the buffer
+
+  @priority_queue queue – the queue to remove the object from
+
+ */
+node *dequeue(priority_queue *queue) {
+
+    //nothing to remove from the queue
+    if (queue->curr == 0) {
+        return (node*) NULL;
     }
 
-    //Grab node, move head pointer (could end up being null)
-    node* curNode = (node*) malloc(sizeof(node));
-    curNode->c = q->head->c;
-    curNode->counted = q->head->counted;
-    curNode->encrypted = q->head->encrypted;
+    //otherwise remove the front
+    node *n = (node*) malloc(sizeof(node));
+    n->c = queue->front->c;
+    n->has_been_counted = queue->front->has_been_counted;
+    n->has_been_encrypted = queue->front->has_been_encrypted;
 
-    q->head = q->head->prev;
+    //"pop" the front of the queue off
+    queue->front = queue->front->past;
 
-    //Set tail to null if this was our only element
-    if ( q->count == 1 ) {
-        q->tail = NULL;
+    //check to see if there is only one element in the queue
+    //and set the back equal to null if so
+    if (queue->curr == 1) {
+        queue->back = NULL;
     }
-
-    q->count--;
-
-    return curNode;
+    queue->curr--; //decrement the num of nodes
+    return n; //return the new node
 }
 
 /**
-	Encrypts characters with this methodology:
 
-	1) s = 1;
-	2) Get next character c.
-	3) if c is not a letter then goto (7).
-	4) if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd', 'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
-	5) if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c', 'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
-	6) if (s==0), then do not change c, and set s=1.
-	7) Encrypted character is c.
+   Encryption of data. Here is the algorithm laid out very plainly.
 
-*/
-char encrypt2(char c, int* s){
-    int cVal = (int) c;
 
-    if ( (cVal >= 65 && cVal <= 90) || (cVal >= 97 && cVal <= 122) ) {
-        //C is a letter
-        switch (*s) {
+   1) s = 1;
+   2) Get next character c.
+   3) if c is not a letter then goto (7).
+   4) if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd',
+      'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
+   5) if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c',
+      'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
+   6) if (s==0), then do not change c, and set s=1.
+   7) Encrypted character is c.
+   8) If c!=EOF then goto (2).
 
-            //Decrease w/ wraparound
-            case -1:
+ */
+
+char encryptMessage(char c, int *s) {
+
+    int int_value = (int) c;
+
+    //we're only encrypting if the character is a letter.. soooo checking for that
+    if ((int_value >= 65 && int_value <= 90) || (int_value >= 97 && int_value <= 122)) {
+
+        switch(*s) {
+
+            case -1: //decrement with wrap around functionality
                 *s = 0;
-                if (cVal == 65 ) {
-                    cVal = 90;
-                } else if (cVal == 97 ) {
-                    cVal = 122;
-                } else {
-                    cVal = cVal - 1;
-                }
-                return (char) cVal;
-
-                //Leave
-            case 0:
+                int_value = (int_value == 65) ? 90 :
+                            (int_value == 97) ? 122 :
+                            int_value - 1;
+                return (char) int_value;
+            case 0: //we don't need to do anything
                 *s = 1;
                 return c;
-
-                //Increase w/ wraparound
-            case 1:
+            case 1: //increment with wrap around functionality
                 *s = -1;
-                if ( cVal == 90 ) {
-                    cVal = 65;
-                } else if ( cVal == 122 ) {
-                    cVal = 97;
-                } else {
-                    cVal = cVal + 1;
-                }
-                return (char) cVal;
+                int_value = (int_value == 90) ? 65 :
+                            (int_value == 122) ? 97 :
+                            int_value + 1;
+                return (char) int_value;
         }
-    } else {
-        return c;
-    }
+    } else { return c; } //it's not a letter so don't encryptMessage it
 }
 
-/**
-	Encrypts input of the input buffer, passing them to the output buffer one at a time
+void *input_encrypt(void *a){
 
-	Waits on: Input & output buffers to be available to touch (signaled by count in or writer)
-	Signals: Read in and count out
-*/
-void* encryptInput(void* args){
-    node* curIn;
-    node* temp;
-    int s = 1;
-    int wasProcessed = 1;
+    node *curr;
+    node *temp;
 
-    while ( 1 ) {
+    int initial_s = 1;
 
-        //Wait on input buffer
-        sem_wait(&encrypt_in);
+    for(;;) {
 
-        debug("in encryption\n");
+        sem_wait(&encrypt_input);
+        outlog("input encryption\n");
 
-        curIn = input_bufferq.head;
+        curr = input_buffer.front;
 
-        //Encrypt as many as we want
-        while ( curIn != NULL ) {
-            //debug("encryption not null\n");
-            if ( curIn->counted && !curIn->encrypted) {
-                if ( curIn->c != EOF && curIn->c != '\n' ) {
-                    curIn->c = encrypt2(curIn->c, &s); //Encrypt char, adjust S value
+        while (NULL != curr) {
+
+            if (curr->has_been_counted && !curr->has_been_encrypted) {
+                if (curr->c != EOF && curr->c != '\n') {
+                    curr->c = encryptMessage(curr->c, &initial_s);
                 }
-
-                curIn->encrypted = 1;
-                debug("encrypted something\n");
-
+                curr->has_been_encrypted = 1;
+                outlog("encrypted input\n");
                 break;
             }
-
-            curIn = curIn->prev;
+            curr = curr->past;
         }
-
-        //Establish if the sequential next element is ready to process
-        if (input_bufferq.count > 0 && input_bufferq.head->encrypted){
-            temp = dequeue(&input_bufferq);
-            //debug("Ready to go to output\n");
-            //Signal input buffer
+        if (input_buffer.curr > 0 && input_buffer.front->has_been_encrypted) {
+            temp = dequeue(&input_buffer);
             sem_post(&read_in);
         }
+        sem_wait(&encrypt_output);
+        enqueue(&output_buffer, temp->c);
+        outlog("Sent to output\n");
 
-        //Wait on output buffer
-        sem_wait(&encrypt_out);
+        sem_post(&output_count);
 
-        //If we can process this element
-        enqueue(&output_bufferq, temp->c);
-        debug("Pushed to output\n");
-
-        sem_post(&count_out);
-
-        if ( temp->c == EOF ) {
-            debug("--------FINISHED ENCRYPTING\n");
+        if (temp->c == EOF) {
+            outlog("Encrypting done\n");
             break;
         }
     }
 }
 
 /**
-	Continously counts the character occurences in the output buffer
 
-	Waits on: Output Buffer to be available to touch (signaled by encryption)
-	Signals: Writer (to file)
-*/
-void* countOutput(void* args){
-    int i;
-    node* cur;
 
-    while ( 1 ) {
-        //Wait on output
-        sem_wait(&count_out);
+ */
 
-        cur = output_bufferq.head;
+void *count_output(void *a) {
 
-        debug("in output\n");
-        while ( cur != NULL ) {
-            //debug("In output not null\n");
-            if ( !cur->counted ) {
-                outputCount[cur->c] = outputCount[cur->c] + 1; //Increment this character count
-                cur->counted = 1;
+    node *curr;
 
+    for(;;) {
+
+        sem_wait(&output_count);
+        curr = output_buffer.front;
+
+        outlog("output counting\n");
+        while (NULL != curr) {
+
+            if (!curr->has_been_counted) {
+
+                out_count[curr->c]++;
+                curr->has_been_counted = 1;
                 sem_post(&write_out);
+                outlog("Counted output\n");
 
-                debug("Counted some output \n");
+                if (curr->c == EOF) {
 
-                if ( cur->c == EOF ) {
-                    debug("--------FINISHED COUNTING OUT\n");
+                    outlog("Counting output done\n");
                     return (void*) NULL;
                 } else {
                     break;
                 }
             } else {
-                cur = cur->prev;
+                curr = curr->past;
             }
         }
     }
 }
 
-/**
-	Continously counts the character occurences in the input buffer
+void *count_input(void *a) {
 
-	Waits on: Input Buffer to be available to touch (signaled by readinput)
-	Signals: Encryption
-*/
-void* countInput(void* args){
-    int i;
-    node* cur;
+    node *curr;
 
-    while ( 1 ) {
-        //Wait on input
-        sem_wait(&count_in);
+    for(;;) {
 
-        cur = input_bufferq.head;
+        sem_wait(&input_count);
+        curr = input_buffer.front;
+        outlog("input counting\n");
+        while (NULL != curr) {
+            if (curr->has_been_counted == 0) {
+                in_count[curr->c]++;
+                curr->has_been_counted = 1;
+                sem_post(&encrypt_input);
+                outlog("Counted input\n");
 
-        debug("In counting\n");
-        while ( cur != NULL ) {
-            //debug("in count not null\n");
-            if ( cur->counted == 0 ) {
-                inputCount[cur->c] = inputCount[cur->c] + 1; //Increment this character count
-                cur->counted = 1;
-
-                sem_post(&encrypt_in);
-
-                debug("Counted some input \n");
-
-                if ( cur->c == EOF ) {
-                    debug("--------FINISHED COUNTING IN\n");
+                if(curr->c == EOF) {
+                    outlog("Counting input done\n");
                     return (void*) NULL;
                 } else {
                     break;
                 }
             } else {
-                cur = cur->prev;
+                curr = curr->past;
             }
         }
-
     }
-
 }
 
-/**
-	Continously read input from a file byte-by-byte, writing to a buffer.
+void *read_input(void *a) {
 
-	Waits on: Input Buffer to be available to touch (signaled by encryption)
-	Signals: Counting thread
-*/
-void* readInput(void* args){
-    char cur;
+    char curr;
 
-    cur = fgetc(inFile);
+    curr = fgetc(in_file);
 
-    while ( 1 ) {
-        //WAIT on input
+    for(;;) {
         sem_wait(&read_in);
 
-        if ( enqueue(&input_bufferq, cur) ) {
-            debug("Placed char in buffer (in)\n");
+        if (enqueue(&input_buffer, curr)) {
+            outlog("Char put into queue\n");
+            sem_post(&input_count);
 
-            sem_post(&count_in);
-
-            if ( cur == EOF) {
-                debug("--------FINISHED READING\n");
+            if(curr == EOF) {
+                outlog("Done reading input\n");
                 break;
             } else {
-                cur = fgetc(inFile);
+                curr = fgetc(in_file);
             }
         }
-
     }
 }
 
-/**
-	Write to the output file continously.
+void *write_output(void *a) {
 
-	Waits on: Output Buffer to be available to touch (signaled by output counter)
-	Signals: Encryption
-*/
-void* writeOutput(void* args){
-    node* cur;
+    node *curr;
 
-    while ( 1 ) {
-        //WAIT on output
+    for(;;) {
         sem_wait(&write_out);
+        curr = output_buffer.front;
 
-        cur = output_bufferq.head;
+        if (curr->has_been_counted) {
+            dequeue(&output_buffer);
 
-        //Iterate over each node, but break as soon as we find one that isn't counted to maintain order
-        if ( cur->counted ) {
-            dequeue(&output_bufferq);
-
-            if ( cur->c == EOF ) {
+            if (curr->c == EOF) {
                 break;
             }
 
-            fputc(cur->c, outFile);
-            fflush(outFile);
-
-            cur = cur->prev;
+            fputc(curr->c, out_file);
+            fflush(out_file);
+            curr = curr->past;
         }
-
-        sem_post(&encrypt_out);
+        sem_post(&encrypt_output);
     }
-
-    debug("-----------Finishing writing output\n");
+    outlog("Done writing output\n");
 }
 
 /**
-	Function for outputting debug messages when applicable
-*/
-void debug(char* msg){
-    if ( debugging ) {
-        printf("%s", msg);
+
+   Helper method to be used solely for debugging. Displays exactly what is wrong.
+
+   @char *text – the string to print out
+ */
+void outlog(char *text) {
+    if (toLog) {
+        printf("%s",text);
     }
 }
