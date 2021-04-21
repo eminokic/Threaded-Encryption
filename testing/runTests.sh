@@ -1,11 +1,11 @@
 echo "Running input file 1"
-./encrypt infile1 outfile1test
+./encrypt infile1 testOutput1
 
-echo "Output Difference:"
-diff outfile1 outfile1test
+echo "Output-1 Difference:"
+diff outfile1 testOutput1
 
 echo "Running input file 2"
-./encrypt infile2 outfile2test
+./encrypt infile2 testOutput2
 
-echo "Output Difference:"
-diff outfile2 outfile2test
+echo "Output-2 Difference:"
+diff outfile2 testOutput2

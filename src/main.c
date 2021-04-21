@@ -46,14 +46,13 @@ typedef struct {
     node* back;
 
     int max;
-    int curr;
+    int current;
 
 } priority_queue;
 
 /**
    Encrypt Module Library
  */
-
 void *count_input(void *a);
 void *read_input(void *a);
 void *input_encrypt(void *a);
@@ -62,8 +61,8 @@ void *write_output(void *a);
 void responseLog(char *text);
 
 
-int in_count[255];
-int out_count[255];
+int inputCount[255];
+int outputCount[255];
 int size;
 
 priority_queue input_buffer;
@@ -81,6 +80,16 @@ FILE *out_file;
 
 int toLog = 0;
 
+/**
+ * The Response Log as the name states is used for logging responses made by the console during encryption.
+ * Specifically, it is beneficial to log responses that the console makes regarding buffersize and segmentation faults.
+ */
+void responseLog(char *text) {
+    if (toLog) {
+        printf("%s",text);
+    }
+}
+
 int main(int argc, char **argv) {
 
     //The list of threads for the main program
@@ -88,17 +97,16 @@ int main(int argc, char **argv) {
 
     //Command Input Verification
     if (argc != 3) {
-        printf("Invalid number of arguments.\n   Usage: ./encryptMessage [infile] [outfile] \n");
+        printf("Invalid number of arguments.\n   Usage: ./encryptMessage input-file output-file \n");
         exit(-1); //exit with an error
     }
 
-    //Read/Write Files
     in_file = fopen(argv[1], "r");
     out_file = fopen(argv[2], "w");
 
     if (in_file != NULL) {
 
-        printf("Please enter a buffer size: ");
+        printf("Enter the requested buffer size: ");
         fflush(stdout);
 
         char buff_size[256];
@@ -108,9 +116,9 @@ int main(int argc, char **argv) {
         size = atoi(buff_size);
 
         input_buffer.max = size;
-        input_buffer.curr = 0;
+        input_buffer.current = 0;
         output_buffer.max = size;
-        output_buffer.curr = 0;
+        output_buffer.current = 0;
 
         sem_init(&read_in, 0, 1);
         sem_init(&write_out, 0, 0);
@@ -131,35 +139,33 @@ int main(int argc, char **argv) {
         pthread_join(count_out, NULL);
         pthread_join(out, NULL);
 
-        printf("input file contains: \n");
+        printf("Input File Contents: \n");
 
         //print out the input file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && in_count[i] > 0) {
-                printf("%c: %d\n", (char) i, in_count[i]);
+            if (((char) i) != '\n' && inputCount[i] > 0) {
+                printf("%c: %d\n", (char) i, inputCount[i]);
             }
         }
 
-        printf("output file contains: \n");
+        printf("Output File Contents: \n");
         //print out the output file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && out_count[i] > 0){
-                printf("%c: %d\n", (char) i, out_count[i]);
+            if (((char) i) != '\n' && outputCount[i] > 0){
+                printf("%c: %d\n", (char) i, outputCount[i]);
             }
         }
 
         return 1;
 
     } else {
-        printf("File not found for given name: %s \n", argv[1]);
+        printf("File not found: %s \n", argv[1]);
         exit(-1);
     }
 }
 
 int enqueue(priority_queue *queue, char c) {
-
-    //check to see if the queue is full
-    if (queue->curr == queue->max) {
+    if (queue->current == queue->max) {
         return 0;
     }
 
@@ -168,54 +174,49 @@ int enqueue(priority_queue *queue, char c) {
     ch->has_been_encrypted = 0;
     ch->c = c;
 
-    //if nothing is in the queue so far
-    if (queue->curr == 0) {
+    if (queue->current == 0) {
         queue->front = ch;
         queue->back = ch;
-    } else { //otherwise set ch's past equal to the back  and put ch at the back
+    } else {
         queue->back->past = ch;
         queue->back = ch;
     }
-    queue->curr++;
+    queue->current++;
     return 1;
 }
 
 node *dequeue(priority_queue *queue) {
-
-    //nothing to remove from the queue
-    if (queue->curr == 0) {
+    if (queue->current == 0) {
         return (node*) NULL;
     }
 
-    //otherwise remove the front
     node *n = (node*) malloc(sizeof(node));
     n->c = queue->front->c;
     n->has_been_counted = queue->front->has_been_counted;
     n->has_been_encrypted = queue->front->has_been_encrypted;
 
-    //"pop" the front of the queue off
     queue->front = queue->front->past;
 
-    //check to see if there is only one element in the queue
-    //and set the back equal to null if so
-    if (queue->curr == 1) {
+    if (queue->current == 1) {
         queue->back = NULL;
     }
-    queue->curr--; //decrement the num of nodes
-    return n; //return the new node
+    queue->current--;
+    return n;
 }
 
 /**
    Encryption Algorithm:
     1. s = 1;
-    2. Get next character c.
-    3. if c is not a letter then goto (7).
+    2. Retrieve the next character c.
+    3. if c is not a letter then transition to step 7.
     4. if (s==1) then increase c with wraparound (e.g., 'A' becomes 'B', 'c' becomes 'd',
         'Z' becomes 'A', 'z' becomes 'a'), set s=-1, and goto (7).
-    5. if (s==-1) then decrease c with wraparound (e.g., 'B' becomes 'A', 'd' becomes 'c',
-        'A' becomes 'Z', 'a' becomes 'z'), set s=0, and goto (7).
-    6. if (s==0), then do not change c, and set s=1.
-    7. Encrypted character is c.
+    5. if s == (-1)
+        then decrease c with wraparound, set s=0, and transition to step 7.
+    6. if s==0,
+        then leave c unchanged, and
+             set s=1.
+    7. Define the lambda variable c to be the encrypted character.
     8. If c!=EOF then goto (2).
 
  */
@@ -273,7 +274,7 @@ void *input_encrypt(void *a){
             }
             curr = curr->past;
         }
-        if (input_buffer.curr > 0 && input_buffer.front->has_been_encrypted) {
+        if (input_buffer.current > 0 && input_buffer.front->has_been_encrypted) {
             temp = dequeue(&input_buffer);
             sem_post(&read_in);
         }
@@ -299,19 +300,19 @@ void *count_output(void *a) {
         sem_wait(&output_count);
         curr = output_buffer.front;
 
-        responseLog("output counting\n");
+        responseLog("Counting output... \n");
         while (NULL != curr) {
 
             if (!curr->has_been_counted) {
 
-                out_count[curr->c]++;
+                outputCount[curr->c]++;
                 curr->has_been_counted = 1;
                 sem_post(&write_out);
-                responseLog("Counted output\n");
+                responseLog("Processing output count. \n");
 
                 if (curr->c == EOF) {
 
-                    responseLog("Counting output done\n");
+                    responseLog("Counting output done! \n");
                     return (void*) NULL;
                 } else {
                     break;
@@ -331,16 +332,16 @@ void *count_input(void *a) {
 
         sem_wait(&input_count);
         curr = input_buffer.front;
-        responseLog("input counting\n");
+        responseLog("Counting input... \n");
         while (NULL != curr) {
             if (curr->has_been_counted == 0) {
-                in_count[curr->c]++;
+                inputCount[curr->c]++;
                 curr->has_been_counted = 1;
                 sem_post(&encrypt_input);
-                responseLog("Counted input\n");
+                responseLog("Processing input count. \n");
 
                 if(curr->c == EOF) {
-                    responseLog("Counting input done\n");
+                    responseLog("Counting input done! \n");
                     return (void*) NULL;
                 } else {
                     break;
@@ -362,11 +363,11 @@ void *read_input(void *a) {
         sem_wait(&read_in);
 
         if (enqueue(&input_buffer, curr)) {
-            responseLog("Char put into queue\n");
+            responseLog("Character inserted to queue\n");
             sem_post(&input_count);
 
             if(curr == EOF) {
-                responseLog("Done reading input\n");
+                responseLog("Reading input complete! \n");
                 break;
             } else {
                 curr = fgetc(in_file);
@@ -396,15 +397,5 @@ void *write_output(void *a) {
         }
         sem_post(&encrypt_output);
     }
-    responseLog("Done writing output\n");
-}
-
-/**
- * The Response Log as the name states is used for logging responses made by the console during encryption.
- * Specifically, it is beneficial to log responses that the console makes regarding buffersize and segmentation faults.
- */
-void responseLog(char *text) {
-    if (toLog) {
-        printf("%s",text);
-    }
+    responseLog("Writing output is complete! \n");
 }
