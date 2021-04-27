@@ -1,5 +1,5 @@
 echo "Running input file 1"
-./encrypt infile1 testOutput1
+../src/./encrypt infile1.txt outfile1.txt
 
 echo "Running input file 2"
-./encrypt infile2 testOutput2
+../src/./encrypt infile2.txt outfile2.txt

@@ -10,14 +10,13 @@
 
 *******************************************************************************/
 
-#include "../include/encrypt-module.h"
 #include "../include/encrypt-module.c"
 #include <stdio.h>
 
 void display_counts();
 
 int main(int argc, char **argv) {
-    init("infile1.txt", "outfile1.txt");
+    init(argv[1], argv[2]);
     while ((argc = read_input()) != EOF) {
         count_input(argc);
         argc = caesar_encrypt(argc);
