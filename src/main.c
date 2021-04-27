@@ -57,7 +57,7 @@ void count_input(int c);
 int read_input();
 void *input_encrypt(void *a);
 void *count_output(void *a);
-void *write_output(void *a);
+void write_output(int c);
 void responseLog(char *text);
 
 
@@ -409,7 +409,21 @@ void *read_input_ALT(void *a) {
     }
 }
 
-void *write_output(void *a) {
+/**
+ * Function: Write Output
+ * Description:
+ */
+FILE *output_file;
+void write_output(int c) {
+    fputc(c, output_file);
+}
+
+/**
+ * Personal Function for learning encryption
+ * @param a
+ * @return
+ */
+void *write_output_ALT(void *a) {
 
     node *curr;
 
