@@ -53,7 +53,7 @@ typedef struct {
 /**
    Encrypt Module Library
  */
-void *count_input(void *a);
+void count_input(int c);
 void *read_input(void *a);
 void *input_encrypt(void *a);
 void *count_output(void *a);
@@ -324,7 +324,23 @@ void *count_output(void *a) {
     }
 }
 
-void *count_input(void *a) {
+/**
+ * Encrypt-Module.c Count Input Function : Required and Implemented
+ */
+int input_counts[256];
+int input_total_count;
+void count_input(int c) {
+    input_counts[toupper(c)]++;
+    input_total_count++;
+}
+
+/**
+ * Modified Count Input Method: Changing the prototypes to pointers allows for optimized use.
+ *
+ * @param a
+ * @return
+ */
+void *count_input_Alt(void *a) {
 
     node *curr;
 
