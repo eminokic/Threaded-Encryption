@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "../include/encrypt-module.h"
 
 /**
  * A node object to be implemented into the queue.
@@ -56,13 +57,17 @@ typedef struct {
 void count_input(int c);
 int read_input();
 void *input_encrypt(void *a);
-void *count_output(void *a);
+void *count_output_ALT(void *a);
 void write_output(int c);
 void responseLog(char *text);
 
+FILE *input_file;
+FILE *output_file;
 
-int inputCount[255];
-int outputCount[255];
+int input_counts[256];
+int output_counts[256];
+
+int input_total_count;
 int size;
 
 priority_queue input_buffer;
@@ -130,7 +135,7 @@ int main(int argc, char **argv) {
         pthread_create(&in, NULL, read_input, NULL);
         pthread_create(&count_in, NULL, count_input, NULL);
         pthread_create(&encrypt, NULL, input_encrypt, NULL);
-        pthread_create(&count_out, NULL, count_output, NULL);
+        pthread_create(&count_out, NULL, count_output_ALT, NULL);
         pthread_create(&out, NULL, write_output, NULL);
 
         pthread_join(in, NULL);
@@ -143,16 +148,16 @@ int main(int argc, char **argv) {
 
         //print out the input file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && inputCount[i] > 0) {
-                printf("%c: %d\n", (char) i, inputCount[i]);
+            if (((char) i) != '\n' && input_counts[i] > 0) {
+                printf("%c: %d\n", (char) i, input_counts[i]);
             }
         }
 
         printf("Output File Contents: \n");
         //print out the output file contents
         for (int i = 0; i < 255; i++) {
-            if (((char) i) != '\n' && outputCount[i] > 0){
-                printf("%c: %d\n", (char) i, outputCount[i]);
+            if (((char) i) != '\n' && output_counts[i] > 0){
+                printf("%c: %d\n", (char) i, output_counts[i]);
             }
         }
 
@@ -291,7 +296,7 @@ void *input_encrypt(void *a){
     }
 }
 
-void *count_output(void *a) {
+void *count_output_ALT(void *a) {
 
     node *curr;
 
@@ -305,7 +310,7 @@ void *count_output(void *a) {
 
             if (!curr->has_been_counted) {
 
-                outputCount[curr->c]++;
+                output_counts[curr->c]++;
                 curr->has_been_counted = 1;
                 sem_post(&write_out);
                 responseLog("Processing output count. \n");
@@ -327,122 +332,24 @@ void *count_output(void *a) {
 /**
  * Encrypt-Module.c Count Input Function : Required and Implemented
  */
-int input_counts[256];
-int input_total_count;
 void count_input(int c) {
     input_counts[toupper(c)]++;
     input_total_count++;
 }
 
 /**
- * Modified Count Input Method: Changing the prototypes to pointers allows for optimized use.
- *
- * @param a
- * @return
- */
-void *count_input_Alt(void *a) {
-
-    node *curr;
-
-    for(;;) {
-
-        sem_wait(&input_count);
-        curr = input_buffer.front;
-        responseLog("Counting input... \n");
-        while (NULL != curr) {
-            if (curr->has_been_counted == 0) {
-                inputCount[curr->c]++;
-                curr->has_been_counted = 1;
-                sem_post(&encrypt_input);
-                responseLog("Processing input count. \n");
-
-                if(curr->c == EOF) {
-                    responseLog("Counting input done! \n");
-                    return (void*) NULL;
-                } else {
-                    break;
-                }
-            } else {
-                curr = curr->past;
-            }
-        }
-    }
-}
-
-/**
  * Function: Read Input (Integer Value)
  * Description:
  */
-FILE *input_file;
-
 int read_input() {
     usleep(10000);
     return fgetc(input_file);
 }
 
 /**
- * Modified read input for personal use.
- *
- * @param a
- * @return
- */
-void *read_input_ALT(void *a) {
-
-    char curr;
-
-    curr = fgetc(in_file);
-
-    for(;;) {
-        sem_wait(&read_in);
-
-        if (enqueue(&input_buffer, curr)) {
-            responseLog("Character inserted to queue\n");
-            sem_post(&input_count);
-
-            if(curr == EOF) {
-                responseLog("Reading input complete! \n");
-                break;
-            } else {
-                curr = fgetc(in_file);
-            }
-        }
-    }
-}
-
-/**
  * Function: Write Output
  * Description:
  */
-FILE *output_file;
 void write_output(int c) {
     fputc(c, output_file);
-}
-
-/**
- * Personal Function for learning encryption
- * @param a
- * @return
- */
-void *write_output_ALT(void *a) {
-
-    node *curr;
-
-    for(;;) {
-        sem_wait(&write_out);
-        curr = output_buffer.front;
-
-        if (curr->has_been_counted) {
-            dequeue(&output_buffer);
-
-            if (curr->c == EOF) {
-                break;
-            }
-
-            fputc(curr->c, out_file);
-            fflush(out_file);
-            curr = curr->past;
-        }
-        sem_post(&encrypt_output);
-    }
-    responseLog("Writing output is complete! \n");
 }
