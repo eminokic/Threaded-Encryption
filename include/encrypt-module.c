@@ -18,6 +18,14 @@ int input_total_count;
 int output_total_count;
 int key = 1;
 
+void reset_requested(){
+    printf("Test Requested");
+}
+
+void reset_finished(){
+    printf("Test Finished");
+}
+
 /**
  * Function: Clear Count (Void)
  * Description: Clears count of input based on size of input.

@@ -41,6 +41,19 @@ void *not_random_reset() {
 		}
 	}
 }
+/**
+ * Function: Random Reset (Void)
+ * Description: Randomly resets a process by sleeping.
+ */
+void *random_reset() {
+    while (1) {
+        sleep(rand() % 11 + 5);
+        reset_requested();
+        key = rand() % 26;
+        clear_counts();
+        reset_finished();
+    }
+}
 
 void init(char *inputFileName, char *outputFileName) {
 	pthread_t pid;
