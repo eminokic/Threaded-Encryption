@@ -54,7 +54,7 @@ typedef struct {
    Encrypt Module Library
  */
 void count_input(int c);
-void *read_input(void *a);
+int read_input();
 void *input_encrypt(void *a);
 void *count_output(void *a);
 void *write_output(void *a);
@@ -369,7 +369,24 @@ void *count_input_Alt(void *a) {
     }
 }
 
-void *read_input(void *a) {
+/**
+ * Function: Read Input (Integer Value)
+ * Description:
+ */
+FILE *input_file;
+
+int read_input() {
+    usleep(10000);
+    return fgetc(input_file);
+}
+
+/**
+ * Modified read input for personal use.
+ *
+ * @param a
+ * @return
+ */
+void *read_input_ALT(void *a) {
 
     char curr;
 
