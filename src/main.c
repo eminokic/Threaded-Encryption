@@ -16,6 +16,13 @@
 void display_counts();
 
 int main(int argc, char **argv) {
+
+    //Command Input Verification
+    if (argc != 3) {
+        printf("Invalid number of arguments.\n   Usage: ./encrypt input-file output-file \n");
+        exit(-1); //exit with an error
+    }
+
     init(argv[1], argv[2]);
     while ((argc = read_input()) != EOF) {
         count_input(argc);
