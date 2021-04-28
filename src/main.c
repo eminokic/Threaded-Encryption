@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
 
 void display_counts() {
     //print out the input file contents
-    for (int i = 0; i < 255; i++) {
+    for (int i = 0; i < 256; i++) {
         if (((char) i) != '\n' && input_counts[i] > 0) {
             printf("%c: %d\n", (char) i, input_counts[i]);
         }
@@ -171,9 +171,64 @@ void display_counts() {
 
     printf("Output File Contents: \n");
     //print out the output file contents
-    for (int i = 0; i < 255; i++) {
+    for (int i = 0; i < 256; i++) {
         if (((char) i) != '\n' && output_counts[i] > 0){
             printf("%c: %d\n", (char) i, output_counts[i]);
         }
     }
 }
+
+int toLog = 0;
+
+/**
+ * The Response Log as the name states is used for logging responses made by the console during encryption.
+ * Specifically, it is beneficial to log responses that the console makes regarding buffersize and segmentation faults.
+ */
+void responseLog(char *text) {
+    if (toLog) {
+        printf("%s",text);
+    }
+}
+void *input_encrypt(void *a){
+
+    node *curr;
+    node *temp;
+
+    int initial_s = 1;
+
+    for(;;) {
+
+        sem_wait(&encrypt_input);
+        responseLog("input encryption\n");
+
+        curr = input_buffer.front;
+
+        while (NULL != curr) {
+
+            if (curr->has_been_counted && !curr->has_been_encrypted) {
+                if (curr->c != EOF && curr->c != '\n') {
+                    curr->c = caesar_encrypt(curr->c);
+                }
+                curr->has_been_encrypted = 1;
+                responseLog("encrypted input\n");
+                break;
+            }
+            curr = curr->past;
+        }
+        if (input_buffer.current > 0 && input_buffer.front->has_been_encrypted) {
+            temp = dequeue(&input_buffer);
+            sem_post(&read_in);
+        }
+        sem_wait(&encrypt_output);
+        enqueue(&output_buffer, temp->c);
+        responseLog("Sent to output\n");
+
+        sem_post(&output_count);
+
+        if (temp->c == EOF) {
+            responseLog("Encrypting done\n");
+            break;
+        }
+    }
+}
+
