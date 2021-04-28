@@ -12,6 +12,8 @@
 
 #include "../include/encrypt-module.c"
 #include <stdio.h>
+#include <semaphore.h>
+#include <pthread.h>
 
 void display_counts();
 
@@ -87,13 +89,24 @@ node *dequeue(priority_queue *queue) {
 priority_queue input_buffer;
 priority_queue output_buffer;
 
+//Initializing Semaphores
+sem_t read_in;
+sem_t write_out;
+sem_t input_count;
+sem_t output_count;
+sem_t encrypt_input;
+sem_t encrypt_output;
+
 /**
  * Main Function for running encryption via console.
  * @param argc
  * @param argv
- * @return
+ * @return program
  */
 int main(int argc, char **argv) {
+
+    //The list of threads for the main program
+    pthread_t in, count_in, encrypt, count_out, out;
 
     //Command Input Verification
     if (argc != 3) {
