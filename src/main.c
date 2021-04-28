@@ -58,3 +58,72 @@ void display_counts() {
         }
     }
 }
+
+/**
+ * A node object to be implemented into the queue.
+ */
+typedef struct node node;
+
+struct node {
+
+    char c;
+    int has_been_counted;
+    int has_been_encrypted;
+
+    node* past;
+
+};
+
+
+/**
+   Implementation of a queue for the buffer
+ */
+typedef struct {
+
+    node* front;
+    node* back;
+
+    int max;
+    int current;
+
+} priority_queue;
+
+int enqueue(priority_queue *queue, char c) {
+    if (queue->current == queue->max) {
+        return 0;
+    }
+
+    node* ch = (node*) malloc(sizeof(node));
+    ch->has_been_counted = 0;
+    ch->has_been_encrypted = 0;
+    ch->c = c;
+
+    if (queue->current == 0) {
+        queue->front = ch;
+        queue->back = ch;
+    } else {
+        queue->back->past = ch;
+        queue->back = ch;
+    }
+    queue->current++;
+    return 1;
+}
+
+node *dequeue(priority_queue *queue) {
+    if (queue->current == 0) {
+        return (node*) NULL;
+    }
+
+    node *n = (node*) malloc(sizeof(node));
+    n->c = queue->front->c;
+    n->has_been_counted = queue->front->has_been_counted;
+    n->has_been_encrypted = queue->front->has_been_encrypted;
+
+    queue->front = queue->front->past;
+
+    if (queue->current == 1) {
+        queue->back = NULL;
+    }
+    queue->current--;
+    return n;
+}
