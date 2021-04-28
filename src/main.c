@@ -94,8 +94,6 @@ sem_t read_in;
 sem_t write_out;
 sem_t input_count;
 sem_t output_count;
-sem_t encrypt_input;
-sem_t encrypt_output;
 
 /**
  * Main Function for running encryption via console.
@@ -152,7 +150,8 @@ int main(int argc, char **argv) {
     while ((argc = read_input()) != EOF) {
         count_input(argc);
         argc = caesar_encrypt(argc);
-        count_output(argc);write_output(argc);
+        count_output(argc);
+        write_output(argc);
     }
     printf("End of file reached.\n");
     display_counts();
