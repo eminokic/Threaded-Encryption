@@ -23,6 +23,12 @@ int main(int argc, char **argv) {
         exit(-1); //exit with an error
     }
 
+    printf("Enter the requested buffer size: ");
+    fflush(stdout);
+
+    char buff_size[256];
+    fgets(buff_size, 256, stdin);
+
     init(argv[1], argv[2]);
     while ((argc = read_input()) != EOF) {
         count_input(argc);
