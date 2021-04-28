@@ -114,13 +114,41 @@ int main(int argc, char **argv) {
         exit(-1); //exit with an error
     }
 
+    init(argv[1], argv[2]);
+
     printf("Enter the requested buffer size: ");
     fflush(stdout);
 
     char buff_size[256];
     fgets(buff_size, 256, stdin);
+    buff_size[strlen(buff_size) - 1] = '\0';
 
-    init(argv[1], argv[2]);
+    int size = atoi(buff_size);
+
+    input_buffer.max = size;
+    input_buffer.current = 0;
+    output_buffer.max = size;
+    output_buffer.current = 0;
+
+    sem_init(&read_in, 0, 1);
+    sem_init(&write_out, 0, 0);
+    sem_init(&input_count, 0, 0);
+    sem_init(&output_count, 0, 0);
+    sem_init(&caesar_encrypt, 0, 0);
+    sem_init(&caesar_encrypt, 0, 1);
+
+    pthread_create(&in, NULL, read_input, NULL);
+    pthread_create(&count_in, NULL, count_input, NULL);
+    pthread_create(&encrypt, NULL, caesar_encrypt, NULL);
+    pthread_create(&count_out, NULL, count_output, NULL);
+    pthread_create(&out, NULL, write_output, NULL);
+
+    pthread_join(in, NULL);
+    pthread_join(count_in, NULL);
+    pthread_join(encrypt, NULL);
+    pthread_join(count_out, NULL);
+    pthread_join(out, NULL);
+
     while ((argc = read_input()) != EOF) {
         count_input(argc);
         argc = caesar_encrypt(argc);
